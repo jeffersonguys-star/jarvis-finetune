@@ -102,7 +102,7 @@ config_treino = SFTConfig(
     per_device_train_batch_size=1,
     gradient_accumulation_steps=8,
     learning_rate=2e-4,
-    logging_steps=10,
+    logging_steps=1,  # log a cada passo — 10 escondia até 80 passos internos em silêncio (grad_accum=8)
     save_strategy="epoch",
     bf16=True,
     max_length=TAMANHO_MAX_SEQUENCIA,  # TRL renomeou de max_seq_length pra max_length
