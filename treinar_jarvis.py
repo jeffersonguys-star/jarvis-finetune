@@ -15,7 +15,7 @@ from trl import SFTTrainer, SFTConfig
 MODELO_BASE = "Qwen/Qwen3-8B"
 ARQUIVO_DATASET = "dataset_jarvis.jsonl"
 PASTA_SAIDA = "jarvis-qwen3-lora"
-TAMANHO_MAX_SEQUENCIA = 6144  # alguns exemplos têm até 68 ferramentas no contexto — cabe folgado
+TAMANHO_MAX_SEQUENCIA = 7168  # medido no Colab: máximo real foi 6398 tokens, isso dá folga
 
 # ---------------------------------------------------------------------------
 # 1) Tokenizer + modelo base em 4-bit (é isso que faz o 8B caber numa GPU
@@ -102,8 +102,9 @@ config_treino = SFTConfig(
     logging_steps=10,
     save_strategy="epoch",
     bf16=True,
-    max_seq_length=TAMANHO_MAX_SEQUENCIA,
+    max_length=TAMANHO_MAX_SEQUENCIA,  # TRL renomeou de max_seq_length pra max_length
     dataset_text_field="text",
+    gradient_checkpointing=True,  # sequências longas (média 5.2k tokens) — isso poupa bastante VRAM na T4
     report_to="none",
 )
 
