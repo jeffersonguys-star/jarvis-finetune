@@ -6,6 +6,9 @@
 # Isso NÃO foi testado rodando de verdade (sem GPU/internet aqui) — rode e
 # me manda o erro exato se travar em algum lugar, corrijo na hora.
 
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # reduz fragmentação de VRAM
+
 import torch
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -15,7 +18,7 @@ from trl import SFTTrainer, SFTConfig
 MODELO_BASE = "Qwen/Qwen3-8B"
 ARQUIVO_DATASET = "dataset_jarvis.jsonl"
 PASTA_SAIDA = "jarvis-qwen3-lora"
-TAMANHO_MAX_SEQUENCIA = 7168  # medido no Colab: máximo real foi 6398 tokens, isso dá folga
+TAMANHO_MAX_SEQUENCIA = 6144  # baixado de 7168 (deu OOM) — corta só os ~50 exemplos mais longos (8%), não metade do dataset
 
 # ---------------------------------------------------------------------------
 # 1) Tokenizer + modelo base em 4-bit (é isso que faz o 8B caber numa GPU
@@ -105,6 +108,7 @@ config_treino = SFTConfig(
     max_length=TAMANHO_MAX_SEQUENCIA,  # TRL renomeou de max_seq_length pra max_length
     dataset_text_field="text",
     gradient_checkpointing=True,  # sequências longas (média 5.2k tokens) — isso poupa bastante VRAM na T4
+    optim="paged_adamw_8bit",  # otimizador que evita picos de memória em sequência longa
     report_to="none",
 )
 
