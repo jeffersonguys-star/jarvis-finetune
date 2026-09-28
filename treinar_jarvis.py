@@ -18,7 +18,7 @@ from trl import SFTTrainer, SFTConfig
 MODELO_BASE = "Qwen/Qwen3-4B"  # trocado de 8B pra 4B — 8B não sobrava memória suficiente na T4 (16GB) pra sequência de 6-7 mil tokens
 ARQUIVO_DATASET = "dataset_jarvis.jsonl"
 PASTA_SAIDA = "jarvis-qwen3-lora"
-TAMANHO_MAX_SEQUENCIA = 7168  # cobre todos os exemplos (máximo real: 6398) — com o 4B deve sobrar espaço
+TAMANHO_MAX_SEQUENCIA = 5120  # contexto de ferramentas foi limitado no gerador (máx 42, era até 68) — deve cobrir tudo com folga agora
 
 # ---------------------------------------------------------------------------
 # 1) Tokenizer + modelo base em 4-bit (é isso que faz o 8B caber numa GPU
