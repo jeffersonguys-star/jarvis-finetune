@@ -15,10 +15,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTTrainer, SFTConfig
 
-MODELO_BASE = "Qwen/Qwen3-8B"
+MODELO_BASE = "Qwen/Qwen3-4B"  # trocado de 8B pra 4B — 8B não sobrava memória suficiente na T4 (16GB) pra sequência de 6-7 mil tokens
 ARQUIVO_DATASET = "dataset_jarvis.jsonl"
 PASTA_SAIDA = "jarvis-qwen3-lora"
-TAMANHO_MAX_SEQUENCIA = 6144  # baixado de 7168 (deu OOM) — corta só os ~50 exemplos mais longos (8%), não metade do dataset
+TAMANHO_MAX_SEQUENCIA = 7168  # cobre todos os exemplos (máximo real: 6398) — com o 4B deve sobrar espaço
 
 # ---------------------------------------------------------------------------
 # 1) Tokenizer + modelo base em 4-bit (é isso que faz o 8B caber numa GPU
@@ -108,6 +108,7 @@ config_treino = SFTConfig(
     max_length=TAMANHO_MAX_SEQUENCIA,  # TRL renomeou de max_seq_length pra max_length
     dataset_text_field="text",
     gradient_checkpointing=True,  # sequências longas (média 5.2k tokens) — isso poupa bastante VRAM na T4
+    gradient_checkpointing_kwargs={"use_reentrant": False},  # recomendação atual pra PEFT + 4-bit
     optim="paged_adamw_8bit",  # otimizador que evita picos de memória em sequência longa
     report_to="none",
 )
