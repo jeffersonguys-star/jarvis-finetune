@@ -37,12 +37,23 @@ bnb_config = BitsAndBytesConfig(
 )
 
 print("Carregando modelo base (baixa ~5GB na primeira vez, demora alguns minutos)...")
-model = AutoModelForCausalLM.from_pretrained(
-    MODELO_BASE,
-    quantization_config=bnb_config,
-    device_map="auto",
-    trust_remote_code=True,
-)
+try:
+    model = AutoModelForCausalLM.from_pretrained(
+        MODELO_BASE,
+        quantization_config=bnb_config,
+        device_map="auto",
+        trust_remote_code=True,
+        attn_implementation="flash_attention_2",
+    )
+    print("Usando Flash Attention 2 (mais rápido e mais leve em sequência longa).")
+except Exception as e:
+    print(f"Flash Attention 2 não disponível ({e}), usando atenção padrão.")
+    model = AutoModelForCausalLM.from_pretrained(
+        MODELO_BASE,
+        quantization_config=bnb_config,
+        device_map="auto",
+        trust_remote_code=True,
+    )
 model = prepare_model_for_kbit_training(model)
 
 # ---------------------------------------------------------------------------
@@ -98,7 +109,7 @@ print()
 # ---------------------------------------------------------------------------
 config_treino = SFTConfig(
     output_dir=PASTA_SAIDA,
-    num_train_epochs=3,
+    num_train_epochs=1,  # baixado de 3 — primeiro confirma se o resultado presta, depois decide se vale rodar mais épocas
     per_device_train_batch_size=1,
     gradient_accumulation_steps=8,
     learning_rate=2e-4,
