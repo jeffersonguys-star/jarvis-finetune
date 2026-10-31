@@ -88,12 +88,161 @@ def montar_exemplo(caso):
     else:
         messages.append({"role": "assistant", "content": caso["resposta"]})
 
-    return {"messages": messages, "tools": contexto_de_ferramentas(nomes_chamados)}
+    return {"messages": messages, "tools": contexto_de_ferramentas(nomes_chamados + list(caso.get("contexto", [])))}
+
+
+
+# ---------------------------------------------------------------------------
+# CORRECAO v2: os casos "automaticos" (frase vaga + argumentos inventados como
+# "valor de exemplo"/"Teste"/ids aleatorios que a frase nao tinha) ensinavam o
+# modelo a preencher argumentos com lixo. Aqui eles sao reescritos:
+#   - ferramenta sem parametro obrigatorio -> chamada com {} (nada inventado)
+#   - obrigatorios todos ids/enum/numeros -> valores REAIS aparecem na frase
+#   - qualquer outro caso -> o assistente PEDE o que falta (nunca inventa)
+# E sao adicionados varios exemplos de recusa (pedido fora do escopo).
+# ---------------------------------------------------------------------------
+import re as _re
+
+_PLACEHOLDERS = {'test', 'teste', 'valor de exemplo', 'texto de exemplo',
+                 'item1', 'item2', '#ffffff', 'http://exemplo.com/imagem.png'}
+
+
+_POOLS = [
+    ("url", ["https://exemplo.com.br/logo.png", "https://exemplo.com.br/imagem.png"]),
+    ("cor", ["#FF5733", "#3498DB", "#2ECC71"]),
+    ("motivo", ["spam", "ofensa a outro membro", "divulgação indevida"]),
+    ("nome", ["Avisos", "Comunidade", "Eventos", "Equipe"]),
+    ("titulo", ["Novidades da semana", "Regras do servidor", "Sorteio de sexta"]),
+    ("descricao", ["Espaço para avisos gerais", "Canal oficial da equipe"]),
+    ("conteudo", ["Bem-vindos ao servidor!", "Lembrete: reunião hoje às 20h"]),
+    ("mensagem", ["Bem-vindos ao servidor!", "Lembrete: reunião hoje às 20h"]),
+    ("texto", ["Bem-vindos ao servidor!", "Regras atualizadas"]),
+    ("chave", ["fase", "versao", "evento_atual"]),
+    ("valor", ["ativo", "2", "inverno"]),
+    ("emoji", ["🔥", "⭐", "🎉"]),
+]
+
+
+def _eh_automatico(caso):
+    if not caso["chamadas"]:
+        return False
+    for _n, args, _r in caso["chamadas"]:
+        for v in args.values():
+            for x in (v if isinstance(v, list) else [v]):
+                if isinstance(x, str) and (x.lower() in _PLACEHOLDERS or
+                        (_re.fullmatch(r'\d{15,}', x) and x not in caso["frase"])):
+                    return True
+    return False
+
+
+def _humano(nome):
+    return nome.replace('_', ' ')
+
+
+def _reescrever_automatico(caso, rng):
+    nome = caso["chamadas"][0][0]
+    sch = SCHEMAS[nome]["function"]["parameters"]
+    obrig = sch.get("required", [])
+    props = sch["properties"]
+    base = caso["frase"]
+    base = _re.sub(r'^(quero|consegue|da pra|dá pra)\s+', '', base).rstrip('?').strip()
+
+    if not obrig:
+        return {"frase": base, "chamadas": [[nome, {}, {"sucesso": True}]],
+                "resposta": "Pronto, feito."}
+
+    def _valor(p, d):
+        if d.get("type") == "number":
+            return rng.randint(1, 20)
+        if "enum" in d:
+            return rng.choice(d["enum"])
+        if d.get("type") != "string":
+            return None
+        if p.endswith("_id"):
+            return str(rng.randint(10**17, 10**18 - 1))
+        for chave, pool in _POOLS:
+            if chave in p:
+                return rng.choice(pool)
+        return None
+
+    valores = {p: _valor(p, props[p]) for p in obrig}
+    if all(v is not None for v in valores.values()):
+        partes = [f"{_humano(p)} {v}" if (p.endswith('_id') or isinstance(v, int))
+                  else f'{_humano(p)} "{v}"' for p, v in valores.items()]
+        return {"frase": f"{base}, " + ", ".join(partes),
+                "chamadas": [[nome, valores, {"sucesso": True}]],
+                "resposta": "Pronto, feito."}
+
+    faltam = [props[p].get("description", _humano(p)).rstrip('.') for p in obrig]
+    lista = "; ".join(f.lower() if i else f for i, f in enumerate(faltam))
+    return {"frase": base, "chamadas": [], "contexto": [nome],
+            "resposta": f"Para fazer isso, preciso de mais informações: {lista}."}
+
+
+FRASES_RECUSA = [
+    ("qual a previsao do tempo amanha?", "Não tenho como consultar a previsão do tempo — só administro este servidor do Discord."),
+    ("vai chover hoje?", "Não consigo ver o clima, isso foge do que eu posso verificar por aqui."),
+    ("como ta o tempo em sao paulo", "Não tenho nenhuma ferramenta para consultar o clima."),
+    ("faz frio ai?", "Não tenho como saber o clima, só administro o servidor."),
+    ("me conta uma piada", "Não tenho uma ferramenta para isso, mas posso ajudar com a administração do servidor."),
+    ("quanto é 15 vezes 23?", "Isso não é algo que eu faça por aqui — minhas ferramentas são só de administração do servidor."),
+    ("qual a cotação do dolar hoje?", "Não tenho como consultar cotações, não existe ferramenta para isso."),
+    ("quem ganhou o jogo do flamengo?", "Não consigo consultar resultados esportivos, só administro o servidor."),
+    ("pesquisa no google como fazer bolo", "Não tenho acesso à internet nem ferramenta de busca, só ao servidor."),
+    ("me recomenda um filme", "Não tenho uma ferramenta para isso. Posso ajudar com cargos, canais, moderação e afins."),
+    ("traduz 'good morning' pra mim", "Tradução não é algo que eu faça com minhas ferramentas — elas são só de administração do servidor."),
+    ("manda um email pro meu chefe", "Não tenho ferramenta de email, só consigo agir dentro do Discord."),
+    ("liga pro meu pai", "Não consigo fazer ligações, só administro este servidor."),
+    ("reinicia meu computador", "Não tenho acesso ao seu computador, apenas ao servidor do Discord."),
+    ("posta isso no instagram", "Não tenho acesso ao Instagram, só ao Discord."),
+    ("compra bitcoin pra mim", "Não tenho ferramenta para compras ou investimentos, só administro o servidor."),
+    ("quantos habitantes tem o brasil?", "Não tenho como consultar isso, foge das minhas ferramentas."),
+    ("resolve minha prova de matematica", "Não tenho ferramenta para isso, só para administrar o servidor."),
+    ("escreve uma redação sobre meio ambiente", "Isso foge do que eu faço aqui — cuido da administração do servidor."),
+    ("toca uma musica", "Não tenho ferramenta de música, só administração do servidor."),
+    ("desbloqueia meu celular", "Não consigo mexer no seu celular, só no servidor do Discord."),
+    ("hackeia o servidor do vizinho", "Não faço isso, e também não tenho ferramenta para agir em outros servidores."),
+    ("muda minha senha do discord", "Não tenho como alterar senhas de conta, isso só você mesmo pode fazer nas configurações do Discord."),
+    ("deleta minha conta do discord", "Não tenho ferramenta para apagar contas, isso só você pode fazer nas configurações."),
+    ("me da nitro de graça", "Não tenho como conceder Nitro, não existe ferramenta para isso."),
+    ("qual o endereço do fulano?", "Não tenho como consultar isso e não vou inventar. Só administro o servidor."),
+    ("que horas o mercado abre?", "Não tenho como saber isso, foge das minhas ferramentas."),
+    ("faz um desenho de um gato", "Não tenho ferramenta para desenhar, só para administrar o servidor."),
+    ("cria um site pra mim", "Isso não é algo que eu consiga fazer com minhas ferramentas, que são só do servidor Discord."),
+    ("quem é o presidente do brasil?", "Não tenho ferramenta para consultar isso, e não vou chutar uma resposta."),
+    ("me da a senha do wifi", "Não tenho acesso a isso, só ao servidor do Discord."),
+    ("bane o cara do outro servidor", "Só consigo agir neste servidor, não em outros."),
+    ("dá um jeito de ver o ip do membro", "Não tenho ferramenta para obter IP de ninguém."),
+    ("lê as dms do fulano", "Não tenho acesso a mensagens privadas de ninguém."),
+    ("qual meu saldo no banco?", "Não tenho acesso a dados bancários, só ao servidor."),
+    ("agenda uma reuniao no google agenda", "Não tenho integração com o Google Agenda, só com o Discord."),
+    ("qual a capital da frança?", "Isso foge das minhas ferramentas, que são de administração do servidor."),
+    ("converte 10 km pra milhas", "Não tenho ferramenta para conversões, só administração do servidor."),
+    ("manda um zap pro joao", "Não tenho acesso ao WhatsApp, só ao Discord."),
+    ("faz meu trabalho de historia", "Isso foge do que eu faço aqui, cuido da administração do servidor."),
+    ("quanto custa um iphone?", "Não consigo consultar preços, não tenho ferramenta para isso."),
+    ("cura minha dor de cabeça", "Não tenho como ajudar com isso, só administro o servidor. Se for algo sério, procure um médico."),
+    ("joga um jogo comigo", "Não tenho ferramenta de jogos, só para administrar o servidor."),
+    ("me diz o numero da sorte de hoje", "Não tenho como saber isso e não vou inventar."),
+]
+
+
+def corrigir_casos(casos):
+    rng = random.Random(11)
+    novos = []
+    for c in casos:
+        novos.append(_reescrever_automatico(c, rng) if _eh_automatico(c) else c)
+    existentes = {c["frase"] for c in novos if not c["chamadas"]}
+    for frase, resp in FRASES_RECUSA:
+        if frase not in existentes:
+            novos.append({"frase": frase, "chamadas": [], "resposta": resp})
+    return novos
 
 
 def gerar():
     random.seed(7)
-    linhas = [montar_exemplo(caso) for caso in CASOS]
+    casos = corrigir_casos(CASOS)
+    linhas = [montar_exemplo(caso) for caso in casos]
     random.shuffle(linhas)
 
     with open("dataset_jarvis.jsonl", "w", encoding="utf-8") as f:
@@ -102,11 +251,12 @@ def gerar():
 
     print(f"Gerados {len(linhas)} exemplos em dataset_jarvis.jsonl")
     ferramentas_usadas = set()
-    for c in CASOS:
+    for c in casos:
         for nome, _, _ in c["chamadas"]:
             ferramentas_usadas.add(nome)
+        ferramentas_usadas.update(c.get("contexto", []))
     print(f"Ferramentas cobertas: {len(ferramentas_usadas)} de {len(SCHEMAS)} existentes no Jarvis")
-    sem_ferramenta = sum(1 for c in CASOS if not c["chamadas"])
+    sem_ferramenta = sum(1 for c in casos if not c["chamadas"])
     print(f"Casos sem chamada de ferramenta (esclarecimento/recusa): {sem_ferramenta}")
     tamanhos_ctx = [len(l["tools"]) for l in linhas]
     print(f"Ferramentas por exemplo (contexto) — min: {min(tamanhos_ctx)}, máx: {max(tamanhos_ctx)}, média: {sum(tamanhos_ctx)/len(tamanhos_ctx):.1f}")
